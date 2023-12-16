@@ -1,11 +1,13 @@
+#include <stdio.h>
 #include <stdlib.h>
 
-/* prototypes */
-void show_usage(void);
+static void print_usage(char *cmd) {
+  fprintf(stderr, "%s utility [arguments...]\n", cmd);
+}
 
 int main(int argc, char **argv) {
   if (argc < 2) {
-    show_usage();
+    print_usage(argv[0]);
     return EXIT_FAILURE;
   }
 
