@@ -1,15 +1,17 @@
 #include <stdio.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <signal.h>
 #include <err.h>
-#include <sys/epoll.h>
+#include <sys/inotify.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <limits.h>
 
-#define MAX_EVENTS 10
+#define EVENT_SIZE (sizeof(struct inotify_event))
+#define BUF_LEN (1024 * (EVENT_SIZE + 16))
 
 static void print_usage(char *cmd) {
   fprintf(stderr, "%s utility [arguments...]\n", cmd);
@@ -39,18 +41,18 @@ static void setup_signal_handler(void) {
   }
 }
 
-static int epoll_fd;
-
-static void register_fd(int epfd, int fd) {
-  struct epoll_event event;
-  // Oh... regular file does not support EPOLLIN event.
-  // because regular files are always readable.
-  event.events = EPOLLIN;
-  event.data.fd = fd;
-  if (epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &event) == -1) {
-    err(EXIT_FAILURE, "epoll_ctl");
+static void register_path_to_watch(int inotify_fd, const char *path) {
+  printf("add path %s\n", path);
+  int watch_descriptor = inotify_add_watch(
+      inotify_fd,
+      path,
+      IN_MODIFY | IN_CREATE | IN_DELETE);
+  if (watch_descriptor == -1) {
+    err(EXIT_FAILURE, "inotify_add_watch");
   }
 }
+
+static bool is_file_or_dir(const char *path);
 
 int main(int argc, char **argv) {
   if (argc < 2) {
@@ -65,46 +67,42 @@ int main(int argc, char **argv) {
 
   setup_signal_handler();
 
-  // Create a new epoll instance.
-  // This will be destroyed and released
-  // when all monitoring files have been closed.
-  if ((epoll_fd = epoll_create1(0)) == -1) {
-    err(EXIT_FAILURE, "epoll_create1");
+  int inotify_fd = inotify_init();
+  if (inotify_fd == -1) {
+    err(EXIT_FAILURE, "inotify_init");
   }
 
-  char buf[PATH_MAX];
+  char path[PATH_MAX];
   char *p;
   struct stat file_info;
-  int fd;
-  while (fgets(buf, PATH_MAX, stdin)) {
-    if (buf[0] == '\0') {
+  while (fgets(path, PATH_MAX, stdin)) {
+    if (path[0] == '\0') {
       continue;
     }
 
     // remove newline
-    if ((p = strchr(buf, '\n')) != NULL) {
+    if ((p = strchr(path, '\n')) != NULL) {
       *p = '\0';
     }
 
-    if (stat(buf, &file_info) == -1) {
-      fprintf(stderr, "Cannot check stat on %s\n", buf);
+    if (stat(path, &file_info) == -1) {
+      fprintf(stderr, "Cannot check stat on %s\n", path);
       continue;
     }
-    if (!S_ISREG(file_info.st_mode)) {
-      // monitor regular file only
+    if (S_ISREG(file_info.st_mode) || S_ISDIR(file_info.st_mode)) {
+      register_path_to_watch(inotify_fd, path);
+    } else {
+      // ignore
       continue;
     }
-
-    fd = open(buf, O_RDONLY);
-    register_fd(epoll_fd, fd);
   }
 
-  struct epoll_event events[MAX_EVENTS];
+  char buffer[BUF_LEN];
   for (;;) {
-    int nfds = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);
-    if (nfds == -1) {
-      err(EXIT_FAILURE, "epoll_wait");
+    if (read(inotify_fd, buffer, BUF_LEN) == -1) {
+      err(EXIT_FAILURE, "read");
     }
+
     printf("changed\n");
     /* run_utility(); */
   }
