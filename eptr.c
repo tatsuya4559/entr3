@@ -37,6 +37,11 @@ int main(int argc, char **argv) {
     print_usage(argv[0]);
     return EXIT_FAILURE;
   }
+  /* expect file list from a pipe */
+  if (isatty(STDIN_FILENO)) {
+    print_usage(argv[0]);
+    return EXIT_FAILURE;
+  }
 
   setup_signal_handler();
 
