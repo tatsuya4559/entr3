@@ -1,11 +1,11 @@
 #include <stdio.h>
-#include <stdbool.h>
 #include <stdlib.h>
+#include <stdbool.h>
+#include <string.h>
 #include <unistd.h>
 #include <signal.h>
 #include <err.h>
 #include <sys/inotify.h>
-#include <string.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -41,6 +41,15 @@ static void setup_signal_handler(void) {
   }
 }
 
+static bool is_file_or_dir(const char *path) {
+  struct stat file_info;
+  if (stat(path, &file_info) == -1) {
+    fprintf(stderr, "Cannot check stat on %s\n", path);
+    return false;
+  }
+  return S_ISREG(file_info.st_mode) || S_ISDIR(file_info.st_mode);
+}
+
 static void register_path_to_watch(int inotify_fd, const char *path) {
   printf("add path %s\n", path);
   int watch_descriptor = inotify_add_watch(
@@ -51,8 +60,6 @@ static void register_path_to_watch(int inotify_fd, const char *path) {
     err(EXIT_FAILURE, "inotify_add_watch");
   }
 }
-
-static bool is_file_or_dir(const char *path);
 
 int main(int argc, char **argv) {
   if (argc < 2) {
@@ -72,9 +79,7 @@ int main(int argc, char **argv) {
     err(EXIT_FAILURE, "inotify_init");
   }
 
-  char path[PATH_MAX];
-  char *p;
-  struct stat file_info;
+  char path[PATH_MAX], *p;
   while (fgets(path, PATH_MAX, stdin)) {
     if (path[0] == '\0') {
       continue;
@@ -85,15 +90,8 @@ int main(int argc, char **argv) {
       *p = '\0';
     }
 
-    if (stat(path, &file_info) == -1) {
-      fprintf(stderr, "Cannot check stat on %s\n", path);
-      continue;
-    }
-    if (S_ISREG(file_info.st_mode) || S_ISDIR(file_info.st_mode)) {
+    if (is_file_or_dir(path)) {
       register_path_to_watch(inotify_fd, path);
-    } else {
-      // ignore
-      continue;
     }
   }
 
