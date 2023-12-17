@@ -42,6 +42,10 @@ static void run_utility(char **argv) {
   if (pid == 0) {
     // child process
     fflush(stdout);
+
+    // set process group for subprocess to be signaled
+    setpgid(0, 0);
+
     if (execvp(argv[0], argv) == -1) {
       err(EXIT_FAILURE, "execvp");
     }
@@ -124,14 +128,11 @@ int main(int argc, char **argv) {
     }
 
     if (is_file_or_dir(path)) {
-      // TODO: cannot watch directory RECURSIVELY -> add recursive option
-      // make sure there is an upper limit of monitoring fds.
-      // you may not watch all directories under the project.
-      // TODO: ignore file and dirs in .gitignore
       register_path_to_watch(inotify_fd, path);
     }
   }
 
+  run_utility(argv + 1);
   char buffer[BUF_LEN];
   for (;;) {
     if (read(inotify_fd, buffer, BUF_LEN) == -1) {
