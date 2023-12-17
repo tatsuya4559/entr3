@@ -9,13 +9,18 @@
 #include <sys/inotify.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <getopt.h>
 #include <limits.h>
 
 #define EVENT_SIZE (sizeof(struct inotify_event))
 #define BUF_LEN (1024 * (EVENT_SIZE + 16))
 
+/* options */
+static bool clear_option_enabled = false;
+static bool postpone_option_enabled = false;
+
 static void print_usage(char *cmd) {
-  fprintf(stderr, "%s utility [arguments...]\n", cmd);
+  fprintf(stderr, "%s [-cp] -- utility\n", cmd);
 }
 
 static pid_t child_pid = 0;
@@ -40,10 +45,17 @@ static void run_utility(char **argv) {
   }
 
   if (pid == 0) {
-    // child process
+    /* child process */
+    if (clear_option_enabled) {
+      /* 2J - clear screen
+       * 3J - clear scrollback buffer
+       * H  - move cursor to the head of screen
+       */
+      printf("\033[2J\033[3J\033[H");
+    }
     fflush(stdout);
 
-    // set process group for subprocess to be signaled
+    /* set process group for subprocess to be signaled */
     setpgid(0, 0);
 
     if (execvp(argv[0], argv) == -1) {
@@ -51,7 +63,7 @@ static void run_utility(char **argv) {
     }
   }
 
-  // parent process
+  /* parent process */
   child_pid = pid;
 }
 
@@ -98,19 +110,36 @@ static void register_path_to_watch(int inotify_fd, const char *path) {
 }
 
 int main(int argc, char **argv) {
-  if (argc < 2) {
+  /* expect file list from a pipe */
+  if (isatty(STDIN_FILENO)) {
     print_usage(argv[0]);
     return EXIT_FAILURE;
   }
-  // expect file list from a pipe
-  if (isatty(STDIN_FILENO)) {
+
+  int opt;
+  while ((opt = getopt(argc, argv, "cp")) != -1) {
+    switch (opt) {
+    case 'c':
+      clear_option_enabled = true;
+      break;
+    case 'p':
+      postpone_option_enabled = true;
+      break;
+    case '?':
+      print_usage(argv[0]);
+      exit(EXIT_FAILURE);
+    }
+  }
+
+  /* there is not non-option argument */
+  if (optind == argc) {
     print_usage(argv[0]);
     return EXIT_FAILURE;
   }
 
   setup_signal_handler();
 
-  // TODO: use fsnotify for mac
+   /* TODO: use fsnotify for mac */
   int inotify_fd = inotify_init();
   if (inotify_fd == -1) {
     err(EXIT_FAILURE, "inotify_init");
@@ -122,7 +151,7 @@ int main(int argc, char **argv) {
       continue;
     }
 
-    // remove newline
+    /* remove newline */
     if ((p = strchr(path, '\n')) != NULL) {
       *p = '\0';
     }
@@ -132,13 +161,15 @@ int main(int argc, char **argv) {
     }
   }
 
-  run_utility(argv + 1);
+  if (!postpone_option_enabled) {
+    run_utility(argv + optind);
+  }
   char buffer[BUF_LEN];
   for (;;) {
     if (read(inotify_fd, buffer, BUF_LEN) == -1) {
       err(EXIT_FAILURE, "read");
     }
-    run_utility(argv + 1);
+    run_utility(argv + optind);
   }
 
   return EXIT_SUCCESS;
