@@ -101,9 +101,7 @@ static bool is_file_or_dir(const char *path) {
 
 static void register_path_to_watch(int inotify_fd, const char *path) {
     int watch_descriptor = inotify_add_watch(
-            inotify_fd,
-            path,
-            IN_MODIFY | IN_CREATE | IN_DELETE);
+            inotify_fd, path, IN_MODIFY | IN_CREATE | IN_DELETE);
     if (watch_descriptor == -1) {
         err(EXIT_FAILURE, "inotify_add_watch");
     }
