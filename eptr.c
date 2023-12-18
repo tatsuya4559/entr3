@@ -47,11 +47,9 @@ static void run_utility(char **argv) {
     if (pid == 0) {
         /* child process */
         if (clear_option_enabled) {
-            /* 2J - clear screen
-             * 3J - clear scrollback buffer
-             * H    - move cursor to the head of screen
-             */
-            printf("\033[2J\033[3J\033[H");
+            printf("\033[2J"); /* clear screen */
+            printf("\033[3J"); /* clear scrollback buffer */
+            printf("\033[H");  /* move cursor to the head of screen */
             fflush(stdout);
         }
 
@@ -137,7 +135,7 @@ int main(int argc, char **argv) {
 
     setup_signal_handler();
 
-     /* TODO: use fsnotify for mac */
+     /* TODO: use fsevent for mac */
     int inotify_fd = inotify_init();
     if (inotify_fd == -1) {
         err(EXIT_FAILURE, "inotify_init");
@@ -167,6 +165,7 @@ int main(int argc, char **argv) {
         if (read(inotify_fd, buffer, BUF_LEN) == -1) {
             err(EXIT_FAILURE, "read");
         }
+        /* NOTE: how it does to pass evented filename thru stdin pipe instead of placeholder? */
         run_utility(argv + optind);
     }
 
