@@ -6,14 +6,16 @@
 #include <signal.h>
 #include <err.h>
 #include <sys/wait.h>
-#include <sys/inotify.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <getopt.h>
 #include <limits.h>
 
-#define EVENT_SIZE (sizeof(struct inotify_event))
-#define BUF_LEN (1024 * (EVENT_SIZE + 16))
+#ifdef __linux__
+#include <sys/inotify.h>
+#elif __APPLE__
+#include <sys/event.h>
+#endif
 
 /* options */
 static bool clear_option_enabled = false;
@@ -97,12 +99,55 @@ static bool is_file_or_dir(const char *path) {
     return S_ISREG(file_info.st_mode) || S_ISDIR(file_info.st_mode);
 }
 
-static void register_path_to_watch(int inotify_fd, const char *path) {
-    int watch_descriptor = inotify_add_watch(
-            inotify_fd, path, IN_MODIFY | IN_CREATE | IN_DELETE);
-    if (watch_descriptor == -1) {
+static int init_watcher(void) {
+#ifdef __linux__
+    int fd = inotify_init();
+    if (fd == -1) {
+        err(EXIT_FAILURE, "inotify_init");
+    }
+#elif __APPLE__
+    int fd = kqueue();
+    if (fd == -1) {
+        err(EXIT_FAILURE, "kqueue");
+    }
+#endif
+    return fd;
+}
+
+static void register_path_to_watch(int watcher_fd, const char *path) {
+#ifdef __linux__
+    if (inotify_add_watch(watcher_fd, path, IN_MODIFY | IN_CREATE | IN_DELETE) == -1) {
         err(EXIT_FAILURE, "inotify_add_watch");
     }
+#elif __APPLE__
+    int target_fd = open(path, O_RDONLY);
+    if (target_fd == -1) {
+        err(EXIT_FAILURE, "open");
+    }
+    struct kevent event;
+    EV_SET(&event, target_fd, EVFILT_VNODE,
+            EV_ADD | EV_ENABLE | EV_CLEAR,
+            NOTE_DELETE | NOTE_WRITE | NOTE_RENAME | NOTE_ATTRIB,
+            0, NULL);
+    if (kevent(watcher_fd, &event, 1, NULL, 0, NULL) == -1) {
+        err(EXIT_FAILURE, "kevent");
+    }
+#endif
+}
+
+static void receive_watch_event(int watcher_fd) {
+#ifdef __linux__
+    size_t buf_len = 1024 * (sizeof(struct inotify_event) + 16);
+    char buffer[buf_len];
+    if (read(watcher_fd, buffer, buf_len) == -1) {
+        err(EXIT_FAILURE, "read");
+    }
+#elif __APPLE__
+    struct kevent event;
+    if (kevent(watcher_fd, NULL, 0, &event, 1, NULL) == -1) {
+        err(EXIT_FAILURE, "kevent");
+    }
+#endif
 }
 
 int main(int argc, char **argv) {
@@ -135,13 +180,9 @@ int main(int argc, char **argv) {
 
     setup_signal_handler();
 
-     /* TODO: use fsevent for mac */
-    int inotify_fd = inotify_init();
-    if (inotify_fd == -1) {
-        err(EXIT_FAILURE, "inotify_init");
-    }
+    int watcher_fd = init_watcher();
 
-    char path[PATH_MAX], *p;
+    char path[PATH_MAX], abspath[PATH_MAX], *p;
     while (fgets(path, PATH_MAX, stdin)) {
         if (path[0] == '\0') {
             continue;
@@ -153,18 +194,19 @@ int main(int argc, char **argv) {
         }
 
         if (is_file_or_dir(path)) {
-            register_path_to_watch(inotify_fd, path);
+            if (realpath(path, abspath) == NULL) {
+                err(EXIT_FAILURE, "realpath");
+            }
+            register_path_to_watch(watcher_fd, abspath);
         }
     }
 
     if (!postpone_option_enabled) {
         run_utility(argv + optind);
     }
-    char buffer[BUF_LEN];
     for (;;) {
-        if (read(inotify_fd, buffer, BUF_LEN) == -1) {
-            err(EXIT_FAILURE, "read");
-        }
+        receive_watch_event(watcher_fd);
+
         /* NOTE: how it does to pass evented filename thru stdin pipe instead of placeholder? */
         run_utility(argv + optind);
     }
