@@ -20,9 +20,19 @@
 /* options */
 static bool clear_option_enabled = false;
 static bool postpone_option_enabled = false;
+static bool restart_option_enabled = false;
 
 static void print_usage(char *cmd) {
-    fprintf(stderr, "%s [-cp] -- utility\n", cmd);
+    fprintf(stderr, "Usage: %s [-cpr] -- utility\n", cmd);
+    fprintf(stderr, "\n");
+    fprintf(stderr, "Options:\n");
+    fprintf(stderr, "  -c\n");
+    fprintf(stderr, "\tClear screen before running utility.\n");
+    fprintf(stderr, "  -p\n");
+    fprintf(stderr, "\tPostpone first execution of utility until any event triggered.\n");
+    fprintf(stderr, "  -r\n");
+    fprintf(stderr, "\tBy default, it waits for utility to stop.\n");
+    fprintf(stderr, "\tUsing this flag, it terminates and relanchs utility when event triggered.\n");
 }
 
 static pid_t child_pid = 0;
@@ -39,7 +49,9 @@ static void terminate_utility() {
 }
 
 static void run_utility(char **argv) {
-    terminate_utility();
+    if (restart_option_enabled) {
+        terminate_utility();
+    }
 
     pid_t pid = fork();
     if (pid == -1) {
@@ -55,8 +67,10 @@ static void run_utility(char **argv) {
             fflush(stdout);
         }
 
-        /* set process group for subprocess to be signaled */
-        setpgid(0, 0);
+        if (restart_option_enabled) {
+            /* set process group for subprocess to be signaled */
+            setpgid(0, 0);
+        }
 
         if (execvp(argv[0], argv) == -1) {
             err(EXIT_FAILURE, "execvp");
@@ -65,6 +79,11 @@ static void run_utility(char **argv) {
 
     /* parent process */
     child_pid = pid;
+    if (!restart_option_enabled) {
+        int status;
+        waitpid(child_pid, &status, 0);
+        child_pid = 0;
+    }
 }
 
 static void handle_exit(int sig) {
@@ -158,13 +177,16 @@ int main(int argc, char **argv) {
     }
 
     int opt;
-    while ((opt = getopt(argc, argv, "cp")) != -1) {
+    while ((opt = getopt(argc, argv, "cpr")) != -1) {
         switch (opt) {
         case 'c':
             clear_option_enabled = true;
             break;
         case 'p':
             postpone_option_enabled = true;
+            break;
+        case 'r':
+            restart_option_enabled = true;
             break;
         case '?':
             print_usage(argv[0]);
